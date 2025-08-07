@@ -1374,7 +1374,7 @@ function FlowCanvasInner({
         </Panel>
 
         {/* Help panel */}
-        <Panel position="top-right">
+        {/* <Panel position="top-right">
           <div
             style={{
               background: 'rgba(0, 0, 0, 0.8)',
@@ -1403,7 +1403,7 @@ function FlowCanvasInner({
             <div>• Delete: Remove selected</div>
             <div>• Escape: Clear selection</div>
           </div>
-        </Panel>
+        </Panel> */}
       </ReactFlow>
 
       {/* Enhanced marquee selection overlay */}

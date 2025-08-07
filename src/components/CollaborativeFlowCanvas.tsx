@@ -16,6 +16,7 @@ import {
   Panel,
   SelectionMode,
   PanOnScrollMode,
+  type SelectionDragHandler,
   useReactFlow,
   useOnSelectionChange,
   useOnViewportChange,
@@ -816,7 +817,7 @@ function FlowCanvasInner({
     [],
   );
 
-  // Better selection detection using flow coordinates
+  // Enhanced selection detection using flow coordinates and React Flow's selection system
   const getNodesInSelectionBox = useCallback(
     (boxStart: { x: number; y: number }, boxEnd: { x: number; y: number }) => {
       if (!reactFlowRef.current) return [];
@@ -831,17 +832,49 @@ function FlowCanvasInner({
       const boxBottom = Math.max(flowStart.y, flowEnd.y);
 
       return nodes.filter((node) => {
-        const nodeLeft = node.position.x;
-        const nodeRight = node.position.x + 100; // Approximate node width
-        const nodeTop = node.position.y;
-        const nodeBottom = node.position.y + 50; // Approximate node height
+        // Get the actual node element to determine its real dimensions
+        const nodeElement = document.querySelector(
+          `[data-id="${node.id}"]`,
+        ) as HTMLElement;
 
-        return (
-          nodeLeft < boxRight &&
-          nodeRight > boxLeft &&
-          nodeTop < boxBottom &&
-          nodeBottom > boxTop
-        );
+        if (nodeElement) {
+          // Use actual node dimensions if available
+          const nodeRect = nodeElement.getBoundingClientRect();
+          const nodeFlowRect = reactFlowRef.current!.screenToFlowPosition({
+            x: nodeRect.left,
+            y: nodeRect.top,
+          });
+          const nodeFlowBottomRight =
+            reactFlowRef.current!.screenToFlowPosition({
+              x: nodeRect.right,
+              y: nodeRect.bottom,
+            });
+
+          const nodeLeft = nodeFlowRect.x;
+          const nodeRight = nodeFlowBottomRight.x;
+          const nodeTop = nodeFlowRect.y;
+          const nodeBottom = nodeFlowBottomRight.y;
+
+          return (
+            nodeLeft < boxRight &&
+            nodeRight > boxLeft &&
+            nodeTop < boxBottom &&
+            nodeBottom > boxTop
+          );
+        } else {
+          // Fallback to approximate dimensions
+          const nodeLeft = node.position.x;
+          const nodeRight = node.position.x + 120; // Slightly larger approximation
+          const nodeTop = node.position.y;
+          const nodeBottom = node.position.y + 60; // Slightly larger approximation
+
+          return (
+            nodeLeft < boxRight &&
+            nodeRight > boxLeft &&
+            nodeTop < boxBottom &&
+            nodeBottom > boxTop
+          );
+        }
       });
     },
     [nodes, convertScreenToFlow],
@@ -971,7 +1004,7 @@ function FlowCanvasInner({
     }
   }, [selectionBox, isMarqueeSelecting, getNodesInSelectionBox]);
 
-  // Keyboard shortcuts
+  // Enhanced keyboard shortcuts
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey) {
@@ -979,54 +1012,130 @@ function FlowCanvasInner({
           case 'a':
             event.preventDefault();
             setSelectedNodes(nodes.map((node) => node.id));
+            console.log(`Selected all ${nodes.length} nodes`);
             break;
           case 'c':
             event.preventDefault();
             // TODO: Implement copy functionality
+            console.log('Copy functionality not yet implemented');
             break;
           case 'v':
             event.preventDefault();
             // TODO: Implement paste functionality
+            console.log('Paste functionality not yet implemented');
             break;
           case 'z':
             event.preventDefault();
             // TODO: Implement undo functionality
+            console.log('Undo functionality not yet implemented');
+            break;
+          case 'd':
+            event.preventDefault();
+            // Deselect all
+            setSelectedNodes([]);
+            console.log('Deselected all nodes');
             break;
         }
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault();
-        // Remove selected nodes
-        setNodes((prev) =>
-          prev.filter((node) => !selectedNodes.includes(node.id)),
-        );
-        setEdges((prev) =>
-          prev.filter(
-            (edge) =>
-              !selectedNodes.includes(edge.source) &&
-              !selectedNodes.includes(edge.target),
-          ),
-        );
-        setSelectedNodes([]);
+        if (selectedNodes.length > 0) {
+          // Remove selected nodes
+          setNodes((prev) =>
+            prev.filter((node) => !selectedNodes.includes(node.id)),
+          );
+          setEdges((prev) =>
+            prev.filter(
+              (edge) =>
+                !selectedNodes.includes(edge.source) &&
+                !selectedNodes.includes(edge.target),
+            ),
+          );
+          console.log(`Deleted ${selectedNodes.length} selected node(s)`);
+          setSelectedNodes([]);
+        }
       } else if (event.key === 'Escape') {
         // Clear selection
         setSelectedNodes([]);
         setSelectionBox(null);
+        setIsMarqueeSelecting(false);
+        console.log('Cleared selection');
+      } else if (event.key === ' ') {
+        // Space key - enable panning mode (design tool behavior)
+        event.preventDefault();
+        document.body.style.cursor = 'grab';
+        console.log('Space pressed - panning mode enabled');
+      } else if (
+        event.key === 'ArrowUp' ||
+        event.key === 'ArrowDown' ||
+        event.key === 'ArrowLeft' ||
+        event.key === 'ArrowRight'
+      ) {
+        // Move selected nodes with arrow keys
+        if (selectedNodes.length > 0) {
+          event.preventDefault();
+          const moveDistance = event.shiftKey ? 10 : 1; // Shift for larger moves
+          let deltaX = 0;
+          let deltaY = 0;
+
+          switch (event.key) {
+            case 'ArrowUp':
+              deltaY = -moveDistance;
+              break;
+            case 'ArrowDown':
+              deltaY = moveDistance;
+              break;
+            case 'ArrowLeft':
+              deltaX = -moveDistance;
+              break;
+            case 'ArrowRight':
+              deltaX = moveDistance;
+              break;
+          }
+
+          setNodes((prev) =>
+            prev.map((node) =>
+              selectedNodes.includes(node.id)
+                ? {
+                    ...node,
+                    position: {
+                      x: node.position.x + deltaX,
+                      y: node.position.y + deltaY,
+                    },
+                  }
+                : node,
+            ),
+          );
+        }
       }
     },
     [selectedNodes, nodes, setNodes, setEdges],
   );
 
-  // Mouse marquee selection
+  // Design tool viewport controls with React Flow integration
   const handleMouseDown = useCallback((event: React.MouseEvent) => {
     // Only start marquee selection if clicking on empty space
     const target = event.target as HTMLElement;
-    if (target && target.closest('.react-flow__node')) {
-      // Clicking on a node - let ReactFlow handle it
+
+    // Check if clicking on a node or control
+    if (
+      target &&
+      (target.closest('.react-flow__node') ||
+        target.closest('.react-flow__controls') ||
+        target.closest('.react-flow__minimap') ||
+        target.closest('.react-flow__panel'))
+    ) {
+      // Clicking on a node or control - let ReactFlow handle it
       return;
     }
 
-    if (event.button === 0 && !event.metaKey && !event.ctrlKey) {
+    if (
+      event.button === 0 &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.shiftKey
+    ) {
       // Left click without modifier keys on empty space - start marquee selection
+      // React Flow's built-in selectionOnDrag will handle most of this
       setSelectionBox({
         start: { x: event.clientX, y: event.clientY },
         end: { x: event.clientX, y: event.clientY },
@@ -1034,8 +1143,9 @@ function FlowCanvasInner({
       });
       setIsMarqueeSelecting(true);
       event.preventDefault();
-    } else if (event.button === 1 || event.button === 2) {
-      // Middle or right mouse button - start panning
+      event.stopPropagation();
+    } else if (event.button === 1 || event.button === 2 || event.shiftKey) {
+      // Middle/right mouse button or shift + left click - start panning
       setIsPanning(true);
       event.preventDefault();
     }
@@ -1052,6 +1162,13 @@ function FlowCanvasInner({
               }
             : null,
         );
+
+        // Real-time selection preview (optional - can be removed if too performance heavy)
+        // const selectedNodes = getNodesInSelectionBox(
+        //   selectionBox.start,
+        //   { x: event.clientX, y: event.clientY }
+        // );
+        // console.log('Selection preview:', selectedNodes.map(n => n.id));
       }
     },
     [selectionBox, isMarqueeSelecting],
@@ -1067,9 +1184,23 @@ function FlowCanvasInner({
       const selectedNodeIds = selectedNodes.map((node) => node.id);
 
       console.log('Mouse marquee selection completed:', selectedNodeIds);
+
+      // Update selected nodes state
       setSelectedNodes(selectedNodeIds);
+
+      // Clear selection box
       setSelectionBox(null);
       setIsMarqueeSelecting(false);
+
+      // Provide user feedback
+      if (selectedNodeIds.length > 0) {
+        console.log(
+          `Selected ${selectedNodeIds.length} node(s):`,
+          selectedNodeIds,
+        );
+      } else {
+        console.log('No nodes selected in marquee area');
+      }
     }
 
     // Stop panning
@@ -1078,7 +1209,21 @@ function FlowCanvasInner({
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', (event) => {
+      if (event.key === ' ') {
+        // Reset cursor when space is released
+        document.body.style.cursor = 'default';
+        console.log('Space released - panning mode disabled');
+      }
+    });
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keyup', (event) => {
+        if (event.key === ' ') {
+          document.body.style.cursor = 'default';
+        }
+      });
+    };
   }, [handleKeyDown]);
 
   // Global mouse event listeners for panning
@@ -1111,12 +1256,27 @@ function FlowCanvasInner({
     };
   }, [isPanning]);
 
-  // Proper selection change handling
+  // Enhanced selection change handling with React Flow integration
   useOnSelectionChange({
     onChange: ({ nodes }) => {
       const selectedIds = nodes.map((node: Node) => node.id);
       setSelectedNodes(selectedIds);
-      console.log('ReactFlow selection changed:', selectedIds);
+
+      // Provide detailed feedback about selection changes
+      if (selectedIds.length > 0) {
+        console.log(
+          `ReactFlow selection changed: ${selectedIds.length} node(s) selected:`,
+          selectedIds,
+        );
+      } else {
+        console.log('ReactFlow selection cleared');
+      }
+
+      // Clear our custom selection box when React Flow handles selection
+      if (selectedIds.length === 0 && selectionBox) {
+        setSelectionBox(null);
+        setIsMarqueeSelecting(false);
+      }
     },
   });
 
@@ -1152,15 +1312,38 @@ function FlowCanvasInner({
         onViewportChange={onViewportChange}
         viewport={viewport}
         fitView
-        // Figma-like gesture controls per React Flow docs:
+        // Design tool viewport controls (Figma-like) per React Flow docs:
         panOnScroll={true} // Enable panning with scroll (trackpad swipe, mouse wheel)
         panOnScrollMode={PanOnScrollMode.Free} // Allow panning in all directions
+        panOnDrag={false} // Disable panning with pointer drag (design tool behavior)
         selectionOnDrag={true} // Enable marquee selection by dragging empty space
         selectionMode={SelectionMode.Partial} // Allow partial selection for marquee
         zoomOnScroll={true} // Enable zooming with scroll (when modifier key is pressed)
         zoomOnPinch={true} // Enable pinch-to-zoom on trackpads/touch
         zoomOnDoubleClick={false} // Disable double-click zoom (Figma disables this)
         preventScrolling={true} // Prevent page scrolling when over the flow
+        // Enhanced selection behavior
+        onSelectionDrag={(event, nodes) => {
+          // Handle selection drag events for better performance
+          console.log(
+            `Dragging ${nodes.length} selected nodes:`,
+            nodes.map((n) => n.id),
+          );
+
+          // Update cursor style during drag
+          const target = event.target as HTMLElement;
+          if (target) {
+            target.style.cursor = 'grabbing';
+          }
+        }}
+        onSelectionDragStop={(event, nodes) => {
+          // Reset cursor when selection drag ends
+          const target = event.target as HTMLElement;
+          if (target) {
+            target.style.cursor = 'default';
+          }
+          console.log(`Finished dragging ${nodes.length} selected nodes`);
+        }}
         // Optionally, you can customize the zoom activation key if you want Cmd/Ctrl+Scroll only:
         // zoomActivationKeyCode="Meta" // Default is 'Meta' (Cmd on Mac, Ctrl on Win)
       >
@@ -1203,22 +1386,27 @@ function FlowCanvasInner({
             }}
           >
             <div style={{ marginBottom: '8px', fontWeight: 'bold' }}>
-              Controls:
+              Design Tool Controls:
             </div>
+            <div>• Scroll: Pan canvas</div>
             <div>• Middle/Right mouse: Pan</div>
-            <div>• Two-finger swipe: Pan</div>
+            <div>• Space + drag: Pan</div>
             <div>• Cmd+Scroll: Zoom</div>
             <div>• Two-finger pinch: Zoom</div>
             <div>• Click: Select node</div>
             <div>• Drag empty space: Marquee select</div>
+            <div>• Drag selected nodes: Move multiple</div>
             <div>• Cmd+A: Select all</div>
+            <div>• Cmd+D: Deselect all</div>
+            <div>• Arrow keys: Move selected</div>
+            <div>• Shift+Arrow: Move faster</div>
             <div>• Delete: Remove selected</div>
             <div>• Escape: Clear selection</div>
           </div>
         </Panel>
       </ReactFlow>
 
-      {/* Marquee selection overlay */}
+      {/* Enhanced marquee selection overlay */}
       {selectionBox && (
         <div
           style={{
@@ -1245,11 +1433,31 @@ function FlowCanvasInner({
               y={Math.min(selectionBox.start.y, selectionBox.end.y)}
               width={Math.abs(selectionBox.end.x - selectionBox.start.x)}
               height={Math.abs(selectionBox.end.y - selectionBox.start.y)}
-              fill="rgba(0, 123, 255, 0.1)"
-              stroke="rgba(0, 123, 255, 0.8)"
-              strokeWidth="1"
-              strokeDasharray="4,4"
+              fill="rgba(0, 123, 255, 0.08)"
+              stroke="rgba(0, 123, 255, 0.9)"
+              strokeWidth="2"
+              strokeDasharray="6,6"
+              rx="2"
+              ry="2"
             />
+            {/* Selection count indicator */}
+            {Math.abs(selectionBox.end.x - selectionBox.start.x) > 10 &&
+              Math.abs(selectionBox.end.y - selectionBox.start.y) > 10 && (
+                <text
+                  x={Math.min(selectionBox.start.x, selectionBox.end.x) + 10}
+                  y={Math.min(selectionBox.start.y, selectionBox.end.y) - 10}
+                  fill="rgba(0, 123, 255, 0.9)"
+                  fontSize="12"
+                  fontWeight="bold"
+                  style={{ pointerEvents: 'none' }}
+                >
+                  {
+                    getNodesInSelectionBox(selectionBox.start, selectionBox.end)
+                      .length
+                  }{' '}
+                  selected
+                </text>
+              )}
           </svg>
         </div>
       )}

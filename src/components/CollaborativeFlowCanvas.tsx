@@ -201,6 +201,23 @@ export function CollaborativeFlowCanvas({
     return () => clearTimeout(timer);
   }, []);
 
+  // Function to get current flow data for sharing
+  const getCurrentFlowData = useCallback(() => {
+    return {
+      nodes: nodesRef.current,
+      edges: edgesRef.current,
+      viewport: viewport,
+      timestamp: Date.now(),
+    };
+  }, [viewport]);
+
+  // Expose the function to parent component
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).getCurrentFlowData = getCurrentFlowData;
+    }
+  }, [getCurrentFlowData]);
+
   // Listen for flow data changes from other users
   useEffect(() => {
     if (!cursors?.perSession) return;

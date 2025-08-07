@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { CursorFeed } from '../schema';
 import { getColor } from '../utils/getColor';
 import { getName } from '../utils/getName';
+import { generateShareURL, sendFlowData } from '../utils/loadCursorContainer';
 import Container from './Container';
 import { FlowCanvas } from './FlowCanvas';
 import { CollaborativeFlowCanvas } from './CollaborativeFlowCanvas';
@@ -40,13 +41,18 @@ type Mode = 'canvas' | 'flow' | 'collaborative-flow';
 function FlowContainer({
   cursorFeedID,
   containerID,
+  groupId,
 }: {
   cursorFeedID: string;
   containerID: string;
+  groupId: string;
 }) {
   const { me } = useAccount();
   const cursors = useCoState(CursorFeed, cursorFeedID, { resolve: true });
   const [mode, setMode] = useState<Mode>('collaborative-flow');
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareURL, setShareURL] = useState<string>('');
+  const [isGeneratingShare, setIsGeneratingShare] = useState(false);
 
   const remoteCursors = Object.values(cursors?.perSession ?? {})
     .map((entry) => ({
@@ -86,6 +92,44 @@ function FlowContainer({
     }
   };
 
+  const generateShare = async () => {
+    if (!me) return;
+
+    setIsGeneratingShare(true);
+    try {
+      // Get current flow data from the canvas
+      const flowData = (window as any).getCurrentFlowData?.() || {
+        nodes: [],
+        edges: [],
+        viewport: { x: 0, y: 0, zoom: 1 },
+        timestamp: Date.now(),
+      };
+
+      // Send flow data through inbox
+      const inboxId = await sendFlowData(me, flowData);
+
+      // Generate share URL with inbox ID
+      const url = generateShareURL(groupId, cursorFeedID, inboxId || undefined);
+      setShareURL(url);
+    } catch (error) {
+      console.error('Failed to generate share URL:', error);
+      // Fallback to basic share URL
+      const url = generateShareURL(groupId, cursorFeedID);
+      setShareURL(url);
+    } finally {
+      setIsGeneratingShare(false);
+    }
+  };
+
+  const copyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(shareURL);
+      alert('Share URL copied to clipboard!');
+    } catch (err) {
+      console.error('Failed to copy URL:', err);
+    }
+  };
+
   return (
     <>
       {/* Mode Toggle */}
@@ -100,6 +144,50 @@ function FlowContainer({
           Current: {getModeLabel(mode)}
         </div>
       </div>
+
+      {/* Share Button */}
+      <div className="absolute top-4 left-64 bg-white p-2 rounded-lg shadow z-10">
+        <button
+          onClick={() => {
+            setShowShareModal(true);
+            generateShare();
+          }}
+          className="px-3 py-1 rounded bg-green-500 text-white hover:bg-green-600 transition-colors"
+          disabled={isGeneratingShare}
+        >
+          {isGeneratingShare ? 'Generating...' : 'Share'}
+        </button>
+      </div>
+
+      {/* Share Modal */}
+      {showShareModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold mb-4">Share Your Flow</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Send this URL to others to collaborate in real-time:
+            </p>
+            <div className="bg-gray-100 p-3 rounded text-sm font-mono break-all mb-4">
+              {shareURL || 'Generating share URL...'}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={copyToClipboard}
+                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                disabled={!shareURL}
+              >
+                Copy URL
+              </button>
+              <button
+                onClick={() => setShowShareModal(false)}
+                className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* User Avatars */}
       <div className="absolute top-4 right-4 bg-white p-2 rounded-lg shadow">

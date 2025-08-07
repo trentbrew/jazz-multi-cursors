@@ -13,6 +13,7 @@ interface CursorProps {
   age?: number;
   centerOfBounds: Vec2;
   bounds?: ViewBox;
+  isGhost?: boolean;
 }
 
 const LABEL_BOUNDS_PADDING = 32;
@@ -27,6 +28,7 @@ export function Cursor({
   age = 0,
   centerOfBounds,
   bounds,
+  isGhost = false,
 }: CursorProps) {
   if (!bounds) return null;
 
@@ -104,6 +106,20 @@ export function Cursor({
             strokeLinejoin="round"
           />
         ) : null}
+
+        {/* Ghost indicator */}
+        {isGhost && (
+          <circle
+            cx={0}
+            cy={0}
+            r={8}
+            fill="none"
+            stroke="red"
+            strokeWidth="2"
+            strokeDasharray="4,4"
+            opacity={0.7}
+          />
+        )}
       </animated.g>
 
       {isRemote ? (

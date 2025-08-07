@@ -13,6 +13,13 @@ import {
   type Node,
   type ReactFlowInstance,
   type Viewport,
+  Panel,
+  SelectionMode,
+  PanOnScrollMode,
+  useReactFlow,
+  useOnSelectionChange,
+  useOnViewportChange,
+  ReactFlowProvider,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { CursorFeed, CursorContainer } from '../schema';
@@ -27,22 +34,45 @@ const OLD_CURSOR_AGE_SECONDS = Number(
 const initialNodes: Node[] = [
   {
     id: '1',
-    type: 'input',
+    type: 'custom',
     data: { label: 'Start' },
     position: { x: 250, y: 25 },
   },
   {
     id: '2',
+    type: 'custom',
     data: { label: 'Process' },
     position: { x: 100, y: 125 },
   },
   {
     id: '3',
-    type: 'output',
+    type: 'custom',
     data: { label: 'End' },
     position: { x: 250, y: 250 },
   },
 ];
+
+// Custom node component with selection styling
+const CustomNode = ({ data, selected }: { data: any; selected: boolean }) => (
+  <div
+    style={{
+      padding: '10px',
+      borderRadius: '5px',
+      backgroundColor: selected ? '#e3f2fd' : '#fff',
+      border: selected ? '2px solid #2196f3' : '1px solid #ccc',
+      boxShadow: selected
+        ? '0 0 10px rgba(33, 150, 243, 0.3)'
+        : '0 2px 4px rgba(0,0,0,0.1)',
+      transition: 'all 0.2s ease',
+    }}
+  >
+    {data.label}
+  </div>
+);
+
+const nodeTypes = {
+  custom: CustomNode,
+};
 
 const initialEdges: Edge[] = [
   { id: 'e1-2', source: '1', target: '2' },
@@ -54,7 +84,8 @@ interface CollaborativeFlowCanvasProps {
   containerID: string;
 }
 
-export function CollaborativeFlowCanvas({
+// Inner component that uses React Flow hooks
+function FlowCanvasInner({
   cursorFeedID,
   containerID,
 }: CollaborativeFlowCanvasProps) {
@@ -72,6 +103,28 @@ export function CollaborativeFlowCanvas({
   const [isDragging, setIsDragging] = useState(false);
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 });
 
+  // React Flow hooks
+  const reactFlowInstance = useReactFlow();
+
+  // Marquee selection state
+  const [selectionBox, setSelectionBox] = useState<{
+    start: { x: number; y: number };
+    end: { x: number; y: number };
+    isSelecting: boolean;
+  } | null>(null);
+  const [selectedNodes, setSelectedNodes] = useState<string[]>([]);
+  const [isMarqueeSelecting, setIsMarqueeSelecting] = useState(false);
+
+  // Gesture control state
+  const [isPanning, setIsPanning] = useState(false);
+  const [lastTouchDistance, setLastTouchDistance] = useState<number | null>(
+    null,
+  );
+  const [lastTouchCenter, setLastTouchCenter] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+
   // Refs to track current state and prevent infinite loops
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
@@ -79,6 +132,7 @@ export function CollaborativeFlowCanvas({
   const isReceivingUpdateRef = useRef(false);
   const isInitialLoadRef = useRef(true);
   const hasLoadedPersistedDataRef = useRef(false);
+  const localStorageKeyRef = useRef(`flow-state-${containerID}`);
 
   // Update refs when state changes
   useEffect(() => {
@@ -89,13 +143,16 @@ export function CollaborativeFlowCanvas({
     edgesRef.current = edges;
   }, [edges]);
 
-  // Load persisted flow data on mount
+  // Load persisted flow data on mount with localStorage backup
   useEffect(() => {
-    if (
-      flowDiagram?.nodes &&
-      flowDiagram?.edges &&
-      !hasLoadedPersistedDataRef.current
-    ) {
+    if (hasLoadedPersistedDataRef.current) return;
+
+    let loadedFromJazz = false;
+    let loadedFromLocalStorage = false;
+
+    // First, try to load from Jazz database
+    if (flowDiagram?.nodes && flowDiagram?.edges) {
+      loadedFromJazz = true;
       hasLoadedPersistedDataRef.current = true;
 
       // Convert Jazz nodes to ReactFlow nodes
@@ -120,20 +177,49 @@ export function CollaborativeFlowCanvas({
       // Only set if we have persisted data, otherwise keep initial nodes
       if (persistedNodes.length > 0) {
         setNodes(persistedNodes);
+        console.log('Loaded flow data from Jazz database');
       }
       if (persistedEdges.length > 0) {
         setEdges(persistedEdges);
       }
     }
+
+    // If no Jazz data, try localStorage as backup
+    if (!loadedFromJazz) {
+      try {
+        const localStorageData = localStorage.getItem(
+          localStorageKeyRef.current,
+        );
+        if (localStorageData) {
+          const parsedData = JSON.parse(localStorageData);
+          if (parsedData.nodes && parsedData.edges) {
+            setNodes(parsedData.nodes);
+            setEdges(parsedData.edges);
+            loadedFromLocalStorage = true;
+            console.log('Loaded flow data from localStorage backup');
+          }
+        }
+      } catch (error) {
+        console.error('Error loading from localStorage:', error);
+      }
+    }
+
+    // If neither Jazz nor localStorage has data, use initial state
+    if (!loadedFromJazz && !loadedFromLocalStorage) {
+      console.log('Using initial flow state');
+    }
+
+    hasLoadedPersistedDataRef.current = true;
   }, [flowDiagram, setNodes, setEdges]);
 
   // Load persisted viewport
   useEffect(() => {
-    if (
-      flowViewport &&
-      reactFlowRef.current &&
-      !hasLoadedPersistedDataRef.current
-    ) {
+    if (!reactFlowRef.current || hasLoadedPersistedDataRef.current) return;
+
+    let loadedViewport = false;
+
+    // First, try to load from Jazz database
+    if (flowViewport) {
       const newViewport = {
         x: Number(flowViewport.x || 0),
         y: Number(flowViewport.y || 0),
@@ -141,6 +227,33 @@ export function CollaborativeFlowCanvas({
       };
       setViewport(newViewport);
       reactFlowRef.current.setViewport(newViewport);
+      loadedViewport = true;
+      console.log('Loaded viewport from Jazz database');
+    }
+
+    // If no Jazz viewport, try localStorage as backup
+    if (!loadedViewport) {
+      try {
+        const viewportData = localStorage.getItem(
+          `${localStorageKeyRef.current}-viewport`,
+        );
+        if (viewportData) {
+          const parsedData = JSON.parse(viewportData);
+          if (parsedData.viewport) {
+            setViewport(parsedData.viewport);
+            reactFlowRef.current.setViewport(parsedData.viewport);
+            loadedViewport = true;
+            console.log('Loaded viewport from localStorage backup');
+          }
+        }
+      } catch (error) {
+        console.error('Error loading viewport from localStorage:', error);
+      }
+    }
+
+    // If neither Jazz nor localStorage has viewport data, use default
+    if (!loadedViewport) {
+      console.log('Using default viewport');
     }
   }, [flowViewport]);
 
@@ -169,37 +282,116 @@ export function CollaborativeFlowCanvas({
     [cursors],
   );
 
-  // Persist flow data to Jazz database (simplified)
+  // Persist flow data to Jazz database and localStorage
   const persistFlowData = useCallback(
     (newNodes: Node[], newEdges: Edge[]) => {
-      if (!flowDiagram || isInitialLoadRef.current) return;
+      if (isInitialLoadRef.current) return;
 
-      // For now, just sync to cursor feed for persistence
-      // The Jazz database persistence can be implemented later
+      console.log('Persisting flow data:', {
+        nodesCount: newNodes.length,
+        edgesCount: newEdges.length,
+        timestamp: Date.now(),
+      });
+
+      // Save to localStorage as backup
+      try {
+        const flowData = {
+          nodes: newNodes,
+          edges: newEdges,
+          timestamp: Date.now(),
+        };
+        localStorage.setItem(
+          localStorageKeyRef.current,
+          JSON.stringify(flowData),
+        );
+      } catch (error) {
+        console.error('Error saving to localStorage:', error);
+      }
+
+      // Sync to cursor feed for real-time collaboration
       syncFlowData(newNodes, newEdges, false);
+
+      // TODO: Implement proper Jazz database persistence
+      // For now, the cursor feed serves as the primary persistence mechanism
     },
-    [flowDiagram, syncFlowData],
+    [syncFlowData],
   );
 
-  // Persist viewport to Jazz database
-  const persistViewport = useCallback(
-    (newViewport: Viewport) => {
-      if (!flowViewport || isInitialLoadRef.current) return;
+  // Persist viewport to Jazz database and localStorage
+  const persistViewport = useCallback((newViewport: Viewport) => {
+    if (isInitialLoadRef.current) return;
 
-      // For now, just update the viewport state
-      // The Jazz database persistence can be implemented later
-      setViewport(newViewport);
-    },
-    [flowViewport],
-  );
+    // Save viewport to localStorage
+    try {
+      const viewportData = {
+        viewport: newViewport,
+        timestamp: Date.now(),
+      };
+      localStorage.setItem(
+        `${localStorageKeyRef.current}-viewport`,
+        JSON.stringify(viewportData),
+      );
+    } catch (error) {
+      console.error('Error saving viewport to localStorage:', error);
+    }
+
+    // Update local state
+    setViewport(newViewport);
+
+    // TODO: Implement proper Jazz database persistence for viewport
+  }, []);
 
   // Mark initial load as complete after a short delay
   useEffect(() => {
     const timer = setTimeout(() => {
       isInitialLoadRef.current = false;
+      console.log('Initial load complete, persistence enabled');
     }, 1000);
     return () => clearTimeout(timer);
   }, []);
+
+  // Clear localStorage when component unmounts (optional cleanup)
+  useEffect(() => {
+    return () => {
+      // Optionally clear old localStorage data on unmount
+      // Uncomment the next line if you want to clear localStorage on unmount
+      // localStorage.removeItem(localStorageKeyRef.current);
+    };
+  }, []);
+
+  // Periodic cleanup of stale sessions
+  useEffect(() => {
+    if (!cursors) return;
+
+    const cleanupInterval = setInterval(() => {
+      const now = Date.now();
+      const staleThreshold = 60000; // 1 minute for stale sessions
+
+      // Log current session state for debugging
+      const sessionCount = Object.keys(cursors.perSession || {}).length;
+      console.log(`Current sessions: ${sessionCount}`);
+
+      // Find stale sessions
+      const staleSessions = Object.entries(cursors.perSession || {})
+        .filter(([sessionID, entry]) => {
+          const age = now - new Date(entry.madeAt).getTime();
+          return age > staleThreshold;
+        })
+        .map(([sessionID, entry]) => ({
+          sessionID,
+          name: getName(entry.by?.profile?.name, entry.tx.sessionID),
+          age: now - new Date(entry.madeAt).getTime(),
+        }));
+
+      if (staleSessions.length > 0) {
+        console.log('Stale sessions detected:', staleSessions);
+        // Note: In a real implementation, you would remove these from the cursor feed
+        // For now, we just log them for debugging
+      }
+    }, 10000); // Check every 10 seconds
+
+    return () => clearInterval(cleanupInterval);
+  }, [cursors]);
 
   // Function to get current flow data for sharing
   const getCurrentFlowData = useCallback(() => {
@@ -215,36 +407,89 @@ export function CollaborativeFlowCanvas({
   useEffect(() => {
     if (typeof window !== 'undefined') {
       (window as any).getCurrentFlowData = getCurrentFlowData;
+
+      // Add debugging info
+      console.log('Canvas persistence setup:', {
+        containerID,
+        localStorageKey: localStorageKeyRef.current,
+        hasLocalStorage: typeof localStorage !== 'undefined',
+        isSafari:
+          navigator.userAgent.includes('Safari') &&
+          !navigator.userAgent.includes('Chrome'),
+        isFirefox: navigator.userAgent.includes('Firefox'),
+        isEdge:
+          navigator.userAgent.includes('Edg') ||
+          navigator.userAgent.includes('Edge'),
+      });
     }
-  }, [getCurrentFlowData]);
+  }, [getCurrentFlowData, containerID]);
 
   // Listen for flow data changes from other users
   useEffect(() => {
-    if (!cursors?.perSession) return;
+    if (!cursors?.perSession || isInitialLoadRef.current) return;
 
     Object.values(cursors.perSession).forEach((entry) => {
       if (entry.value.flowData && entry.tx.sessionID !== me?.sessionID) {
         try {
-          const { nodes: remoteNodesStr, edges: remoteEdgesStr } =
-            entry.value.flowData;
+          const {
+            nodes: remoteNodesStr,
+            edges: remoteEdgesStr,
+            timestamp: remoteTimestamp,
+          } = entry.value.flowData;
           if (remoteNodesStr && remoteEdgesStr) {
             const remoteNodes = JSON.parse(remoteNodesStr);
             const remoteEdges = JSON.parse(remoteEdgesStr);
 
-            // Only update if the data is actually different to prevent infinite loops
+            // Always sync if data is different (remove timestamp restriction)
             const currentNodesStr = JSON.stringify(nodesRef.current);
             const currentEdgesStr = JSON.stringify(edgesRef.current);
 
             if (remoteNodesStr !== currentNodesStr) {
+              console.log('Syncing nodes from remote user');
               isReceivingUpdateRef.current = true;
               setNodes(remoteNodes);
+              // Also update localStorage with remote data
+              try {
+                const flowData = {
+                  nodes: remoteNodes,
+                  edges: edgesRef.current,
+                  timestamp: remoteTimestamp || Date.now(),
+                };
+                localStorage.setItem(
+                  localStorageKeyRef.current,
+                  JSON.stringify(flowData),
+                );
+              } catch (error) {
+                console.error(
+                  'Error updating localStorage with remote data:',
+                  error,
+                );
+              }
               setTimeout(() => {
                 isReceivingUpdateRef.current = false;
               }, 50);
             }
             if (remoteEdgesStr !== currentEdgesStr) {
+              console.log('Syncing edges from remote user');
               isReceivingUpdateRef.current = true;
               setEdges(remoteEdges);
+              // Also update localStorage with remote data
+              try {
+                const flowData = {
+                  nodes: nodesRef.current,
+                  edges: remoteEdges,
+                  timestamp: remoteTimestamp || Date.now(),
+                };
+                localStorage.setItem(
+                  localStorageKeyRef.current,
+                  JSON.stringify(flowData),
+                );
+              } catch (error) {
+                console.error(
+                  'Error updating localStorage with remote data:',
+                  error,
+                );
+              }
               setTimeout(() => {
                 isReceivingUpdateRef.current = false;
               }, 50);
@@ -260,22 +505,179 @@ export function CollaborativeFlowCanvas({
   const remoteCursors = useMemo(() => {
     if (!cursors?.perSession) return [];
 
+    const now = Date.now();
+    const maxAgeMs = OLD_CURSOR_AGE_SECONDS * 1000;
+    const ghostDetectionThreshold = 30000; // 30 seconds for ghost detection
+
     return Object.values(cursors.perSession)
-      .map((entry) => ({
-        entry,
-        position: entry.value.position,
-        color: getColor(entry.tx.sessionID),
-        name: getName(entry.by?.profile?.name, entry.tx.sessionID),
-        age: new Date().getTime() - new Date(entry.madeAt).getTime(),
-        active:
-          !OLD_CURSOR_AGE_SECONDS ||
-          entry.madeAt >= new Date(Date.now() - 1000 * OLD_CURSOR_AGE_SECONDS),
-        isMe: entry.tx.sessionID === me?.sessionID,
-      }))
+      .map((entry) => {
+        const age = now - new Date(entry.madeAt).getTime();
+        const isActive = age <= maxAgeMs;
+        const isGhost = age > ghostDetectionThreshold;
+
+        return {
+          entry,
+          position: entry.value.position,
+          color: getColor(entry.tx.sessionID),
+          name: getName(entry.by?.profile?.name, entry.tx.sessionID),
+          age,
+          active: isActive,
+          isGhost,
+          isMe: entry.tx.sessionID === me?.sessionID,
+          sessionID: entry.tx.sessionID,
+          lastActivity: entry.madeAt,
+        };
+      })
+      .filter((cursor) => {
+        // Filter out ghosts and inactive cursors
+        if (cursor.isGhost) {
+          console.log(
+            `Filtering out ghost cursor: ${cursor.name} (age: ${cursor.age}ms)`,
+          );
+          return false;
+        }
+
+        if (!cursor.active) {
+          console.log(
+            `Filtering out inactive cursor: ${cursor.name} (age: ${cursor.age}ms)`,
+          );
+          return false;
+        }
+
+        return true;
+      })
       .sort((a, b) => {
         return b.entry.madeAt.getTime() - a.entry.madeAt.getTime();
       });
   }, [cursors, me?.sessionID]);
+
+  // Add debug function to clear ghost cursors
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).clearGhostCursors = () => {
+        console.log('Manual ghost cursor cleanup triggered');
+        console.log(
+          'Current sessions:',
+          Object.keys(cursors?.perSession || {}),
+        );
+        console.log('Active cursors:', remoteCursors.length);
+
+        // Force a re-render by updating a dummy state
+        // This will trigger the filtering logic again
+        setViewport((prev) => ({ ...prev }));
+      };
+
+      // Add debug function to show ghost cursor details
+      (window as any).showGhostCursors = () => {
+        console.log('=== GHOST CURSOR DEBUG ===');
+        console.log('All sessions:', Object.keys(cursors?.perSession || {}));
+        console.log('Active cursors:', remoteCursors.length);
+
+        // Show details of each cursor
+        remoteCursors.forEach((cursor, index) => {
+          console.log(`Cursor ${index + 1}:`, {
+            name: cursor.name,
+            sessionID: cursor.sessionID,
+            age: cursor.age,
+            active: cursor.active,
+            isGhost: cursor.isGhost,
+            lastActivity: cursor.lastActivity,
+          });
+        });
+
+        // Show all sessions with their ages
+        Object.entries(cursors?.perSession || {}).forEach(
+          ([sessionID, entry]) => {
+            const age = Date.now() - new Date(entry.madeAt).getTime();
+            const name = getName(entry.by?.profile?.name, entry.tx.sessionID);
+            console.log(`Session ${sessionID}:`, {
+              name,
+              age: `${Math.round(age / 1000)}s`,
+              isActive: age <= OLD_CURSOR_AGE_SECONDS * 1000,
+              isGhost: age > 30000,
+            });
+          },
+        );
+        console.log('=== END GHOST CURSOR DEBUG ===');
+      };
+
+      // Add debug function to force synchronization
+      (window as any).forceSync = () => {
+        console.log('=== FORCE SYNC DEBUG ===');
+        console.log('Current nodes:', nodesRef.current);
+        console.log('Current edges:', edgesRef.current);
+        console.log('Current viewport:', viewport);
+
+        // Force sync current state to all other users
+        if (cursors) {
+          const flowData = {
+            nodes: nodesRef.current,
+            edges: edgesRef.current,
+            timestamp: Date.now(),
+          };
+          cursors.push({
+            position: { x: 0, y: 0 }, // Dummy position
+            flowData: {
+              nodes: JSON.stringify(flowData.nodes),
+              edges: JSON.stringify(flowData.edges),
+              timestamp: flowData.timestamp,
+            },
+          });
+          console.log('Forced sync sent to cursor feed');
+        }
+        console.log('=== END FORCE SYNC DEBUG ===');
+      };
+
+      // Add debug function to clear localStorage and force fresh start
+      (window as any).clearAndResync = () => {
+        console.log('=== CLEAR AND RESYNC DEBUG ===');
+
+        // Clear localStorage
+        try {
+          localStorage.removeItem(localStorageKeyRef.current);
+          localStorage.removeItem(`${localStorageKeyRef.current}-viewport`);
+          console.log('Cleared localStorage');
+        } catch (error) {
+          console.error('Error clearing localStorage:', error);
+        }
+
+        // Reset the loaded flag to force reload from Jazz database
+        hasLoadedPersistedDataRef.current = false;
+        isInitialLoadRef.current = true;
+
+        // Force a re-render
+        setViewport((prev) => ({ ...prev }));
+
+        console.log(
+          'Reset flags, will reload from Jazz database on next render',
+        );
+        console.log('=== END CLEAR AND RESYNC DEBUG ===');
+      };
+
+      // Add debug function to test panning and selection
+      (window as any).testPanning = () => {
+        console.log('=== TEST PANNING DEBUG ===');
+        console.log('Current viewport:', viewport);
+        console.log('Is panning:', isPanning);
+        console.log('Last touch distance:', lastTouchDistance);
+        console.log('Last touch center:', lastTouchCenter);
+        console.log('=== END TEST PANNING DEBUG ===');
+      };
+
+      // Add debug function to test selection
+      (window as any).testSelection = () => {
+        console.log('=== TEST SELECTION DEBUG ===');
+        console.log('Selected nodes:', selectedNodes);
+        console.log('Selection box:', selectionBox);
+        console.log('Is marquee selecting:', isMarqueeSelecting);
+        console.log(
+          'All nodes:',
+          nodes.map((n) => ({ id: n.id, position: n.position })),
+        );
+        console.log('=== END TEST SELECTION DEBUG ===');
+      };
+    }
+  }, [cursors, remoteCursors]);
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -402,11 +804,343 @@ export function CollaborativeFlowCanvas({
     [],
   );
 
+  // Convert screen coordinates to flow coordinates
+  const convertScreenToFlow = useCallback(
+    (screenPosition: { x: number; y: number }) => {
+      if (!reactFlowRef.current) return screenPosition;
+
+      const flowPosition =
+        reactFlowRef.current.screenToFlowPosition(screenPosition);
+      return flowPosition;
+    },
+    [],
+  );
+
+  // Better selection detection using flow coordinates
+  const getNodesInSelectionBox = useCallback(
+    (boxStart: { x: number; y: number }, boxEnd: { x: number; y: number }) => {
+      if (!reactFlowRef.current) return [];
+
+      // Convert screen coordinates to flow coordinates
+      const flowStart = convertScreenToFlow(boxStart);
+      const flowEnd = convertScreenToFlow(boxEnd);
+
+      const boxLeft = Math.min(flowStart.x, flowEnd.x);
+      const boxRight = Math.max(flowStart.x, flowEnd.x);
+      const boxTop = Math.min(flowStart.y, flowEnd.y);
+      const boxBottom = Math.max(flowStart.y, flowEnd.y);
+
+      return nodes.filter((node) => {
+        const nodeLeft = node.position.x;
+        const nodeRight = node.position.x + 100; // Approximate node width
+        const nodeTop = node.position.y;
+        const nodeBottom = node.position.y + 50; // Approximate node height
+
+        return (
+          nodeLeft < boxRight &&
+          nodeRight > boxLeft &&
+          nodeTop < boxBottom &&
+          nodeBottom > boxTop
+        );
+      });
+    },
+    [nodes, convertScreenToFlow],
+  );
+
+  // Gesture control functions
+  const calculateTouchDistance = useCallback((touches: React.TouchList) => {
+    if (touches.length < 2) return null;
+    const touch1 = touches[0];
+    const touch2 = touches[1];
+    return Math.sqrt(
+      Math.pow(touch2.clientX - touch1.clientX, 2) +
+        Math.pow(touch2.clientY - touch1.clientY, 2),
+    );
+  }, []);
+
+  const calculateTouchCenter = useCallback((touches: React.TouchList) => {
+    if (touches.length < 2) return null;
+    const touch1 = touches[0];
+    const touch2 = touches[1];
+    return {
+      x: (touch1.clientX + touch2.clientX) / 2,
+      y: (touch1.clientY + touch2.clientY) / 2,
+    };
+  }, []);
+
+  const handleTouchStart = useCallback(
+    (event: React.TouchEvent) => {
+      if (event.touches.length === 2) {
+        // Two finger gesture - pan or zoom
+        const distance = calculateTouchDistance(event.touches);
+        const center = calculateTouchCenter(event.touches);
+
+        setLastTouchDistance(distance);
+        setLastTouchCenter(center);
+        setIsPanning(true);
+        event.preventDefault(); // Prevent default to avoid conflicts
+        event.stopPropagation(); // Stop event propagation
+      } else if (event.touches.length === 1) {
+        // Single finger - potential marquee selection
+        const touch = event.touches[0];
+        const target = event.target as HTMLElement;
+
+        // Only start marquee selection if not clicking on a node
+        if (!target.closest('.react-flow__node')) {
+          setSelectionBox({
+            start: { x: touch.clientX, y: touch.clientY },
+            end: { x: touch.clientX, y: touch.clientY },
+            isSelecting: true,
+          });
+          setIsMarqueeSelecting(true);
+        }
+      }
+    },
+    [calculateTouchDistance, calculateTouchCenter],
+  );
+
+  const handleTouchMove = useCallback(
+    (event: React.TouchEvent) => {
+      if (event.touches.length === 2 && lastTouchDistance && lastTouchCenter) {
+        // Two finger gesture
+        event.preventDefault(); // Prevent default to avoid conflicts
+        event.stopPropagation(); // Stop event propagation
+        const currentDistance = calculateTouchDistance(event.touches);
+        const currentCenter = calculateTouchCenter(event.touches);
+
+        if (currentDistance && currentCenter) {
+          // Calculate zoom
+          const zoomDelta = currentDistance / lastTouchDistance;
+          const newZoom = Math.max(0.1, Math.min(2, viewport.zoom * zoomDelta));
+
+          // Calculate pan
+          const deltaX = currentCenter.x - lastTouchCenter.x;
+          const deltaY = currentCenter.y - lastTouchCenter.y;
+
+          reactFlowRef.current?.setViewport({
+            ...viewport,
+            x: viewport.x - deltaX / viewport.zoom,
+            y: viewport.y - deltaY / viewport.zoom,
+            zoom: newZoom,
+          });
+
+          setLastTouchDistance(currentDistance);
+          setLastTouchCenter(currentCenter);
+        }
+      } else if (event.touches.length === 1 && selectionBox) {
+        // Single finger marquee selection
+        event.preventDefault(); // Prevent default to avoid conflicts
+        const touch = event.touches[0];
+        setSelectionBox((prev) =>
+          prev
+            ? {
+                ...prev,
+                end: { x: touch.clientX, y: touch.clientY },
+              }
+            : null,
+        );
+      }
+    },
+    [
+      lastTouchDistance,
+      lastTouchCenter,
+      viewport.zoom,
+      selectionBox,
+      calculateTouchDistance,
+      calculateTouchCenter,
+    ],
+  );
+
+  const handleTouchEnd = useCallback(() => {
+    setIsPanning(false);
+    setLastTouchDistance(null);
+    setLastTouchCenter(null);
+
+    if (selectionBox && isMarqueeSelecting) {
+      // Finalize marquee selection using better detection
+      const selectedNodes = getNodesInSelectionBox(
+        selectionBox.start,
+        selectionBox.end,
+      );
+      const selectedNodeIds = selectedNodes.map((node) => node.id);
+
+      console.log('Marquee selection completed:', selectedNodeIds);
+      setSelectedNodes(selectedNodeIds);
+      setSelectionBox(null);
+      setIsMarqueeSelecting(false);
+    }
+  }, [selectionBox, isMarqueeSelecting, getNodesInSelectionBox]);
+
+  // Keyboard shortcuts
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey) {
+        switch (event.key) {
+          case 'a':
+            event.preventDefault();
+            setSelectedNodes(nodes.map((node) => node.id));
+            break;
+          case 'c':
+            event.preventDefault();
+            // TODO: Implement copy functionality
+            break;
+          case 'v':
+            event.preventDefault();
+            // TODO: Implement paste functionality
+            break;
+          case 'z':
+            event.preventDefault();
+            // TODO: Implement undo functionality
+            break;
+        }
+      } else if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        // Remove selected nodes
+        setNodes((prev) =>
+          prev.filter((node) => !selectedNodes.includes(node.id)),
+        );
+        setEdges((prev) =>
+          prev.filter(
+            (edge) =>
+              !selectedNodes.includes(edge.source) &&
+              !selectedNodes.includes(edge.target),
+          ),
+        );
+        setSelectedNodes([]);
+      } else if (event.key === 'Escape') {
+        // Clear selection
+        setSelectedNodes([]);
+        setSelectionBox(null);
+      }
+    },
+    [selectedNodes, nodes, setNodes, setEdges],
+  );
+
+  // Mouse marquee selection
+  const handleMouseDown = useCallback((event: React.MouseEvent) => {
+    // Only start marquee selection if clicking on empty space
+    const target = event.target as HTMLElement;
+    if (target && target.closest('.react-flow__node')) {
+      // Clicking on a node - let ReactFlow handle it
+      return;
+    }
+
+    if (event.button === 0 && !event.metaKey && !event.ctrlKey) {
+      // Left click without modifier keys on empty space - start marquee selection
+      setSelectionBox({
+        start: { x: event.clientX, y: event.clientY },
+        end: { x: event.clientX, y: event.clientY },
+        isSelecting: true,
+      });
+      setIsMarqueeSelecting(true);
+      event.preventDefault();
+    } else if (event.button === 1 || event.button === 2) {
+      // Middle or right mouse button - start panning
+      setIsPanning(true);
+      event.preventDefault();
+    }
+  }, []);
+
+  const handleMouseMove = useCallback(
+    (event: React.MouseEvent) => {
+      if (selectionBox && isMarqueeSelecting) {
+        setSelectionBox((prev) =>
+          prev
+            ? {
+                ...prev,
+                end: { x: event.clientX, y: event.clientY },
+              }
+            : null,
+        );
+      }
+    },
+    [selectionBox, isMarqueeSelecting],
+  );
+
+  const handleMouseUp = useCallback(() => {
+    if (selectionBox && isMarqueeSelecting) {
+      // Finalize marquee selection for mouse using better detection
+      const selectedNodes = getNodesInSelectionBox(
+        selectionBox.start,
+        selectionBox.end,
+      );
+      const selectedNodeIds = selectedNodes.map((node) => node.id);
+
+      console.log('Mouse marquee selection completed:', selectedNodeIds);
+      setSelectedNodes(selectedNodeIds);
+      setSelectionBox(null);
+      setIsMarqueeSelecting(false);
+    }
+
+    // Stop panning
+    setIsPanning(false);
+  }, [selectionBox, isMarqueeSelecting, getNodesInSelectionBox]);
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
+
+  // Global mouse event listeners for panning
+  useEffect(() => {
+    const handleGlobalMouseMove = (event: MouseEvent) => {
+      if (isPanning && reactFlowRef.current) {
+        const deltaX = event.movementX;
+        const deltaY = event.movementY;
+
+        reactFlowRef.current.setViewport({
+          ...viewport,
+          x: viewport.x - deltaX / viewport.zoom,
+          y: viewport.y - deltaY / viewport.zoom,
+        });
+      }
+    };
+
+    const handleGlobalMouseUp = () => {
+      setIsPanning(false);
+    };
+
+    if (isPanning) {
+      document.addEventListener('mousemove', handleGlobalMouseMove);
+      document.addEventListener('mouseup', handleGlobalMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleGlobalMouseMove);
+      document.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  }, [isPanning]);
+
+  // Proper selection change handling
+  useOnSelectionChange({
+    onChange: ({ nodes }) => {
+      const selectedIds = nodes.map((node: Node) => node.id);
+      setSelectedNodes(selectedIds);
+      console.log('ReactFlow selection changed:', selectedIds);
+    },
+  });
+
+  // Proper viewport change handling
+  useOnViewportChange({
+    onChange: (viewport) => {
+      console.log('Viewport changed:', viewport);
+    },
+  });
+
   return (
-    <div style={{ width: '100vw', height: '100vh' }}>
+    <div
+      style={{ width: '100vw', height: '100vh' }}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        nodeTypes={nodeTypes}
         onNodesChange={onNodesChangeWithSync}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
@@ -418,11 +1152,107 @@ export function CollaborativeFlowCanvas({
         onViewportChange={onViewportChange}
         viewport={viewport}
         fitView
+        // Figma-like gesture controls per React Flow docs:
+        panOnScroll={true} // Enable panning with scroll (trackpad swipe, mouse wheel)
+        panOnScrollMode={PanOnScrollMode.Free} // Allow panning in all directions
+        selectionOnDrag={true} // Enable marquee selection by dragging empty space
+        selectionMode={SelectionMode.Partial} // Allow partial selection for marquee
+        zoomOnScroll={true} // Enable zooming with scroll (when modifier key is pressed)
+        zoomOnPinch={true} // Enable pinch-to-zoom on trackpads/touch
+        zoomOnDoubleClick={false} // Disable double-click zoom (Figma disables this)
+        preventScrolling={true} // Prevent page scrolling when over the flow
+        // Optionally, you can customize the zoom activation key if you want Cmd/Ctrl+Scroll only:
+        // zoomActivationKeyCode="Meta" // Default is 'Meta' (Cmd on Mac, Ctrl on Win)
       >
         <Background />
         <Controls />
         <MiniMap />
+
+        {/* Selection info panel */}
+        <Panel position="top-left">
+          <div
+            style={{
+              background: 'rgba(0, 0, 0, 0.8)',
+              color: 'white',
+              padding: '8px 12px',
+              borderRadius: '4px',
+              fontSize: '12px',
+            }}
+          >
+            {selectedNodes.length > 0 ? (
+              <span>
+                {selectedNodes.length} node
+                {selectedNodes.length !== 1 ? 's' : ''} selected
+              </span>
+            ) : (
+              <span>No selection</span>
+            )}
+          </div>
+        </Panel>
+
+        {/* Help panel */}
+        <Panel position="top-right">
+          <div
+            style={{
+              background: 'rgba(0, 0, 0, 0.8)',
+              color: 'white',
+              padding: '12px',
+              borderRadius: '4px',
+              fontSize: '11px',
+              maxWidth: '200px',
+            }}
+          >
+            <div style={{ marginBottom: '8px', fontWeight: 'bold' }}>
+              Controls:
+            </div>
+            <div>• Middle/Right mouse: Pan</div>
+            <div>• Two-finger swipe: Pan</div>
+            <div>• Cmd+Scroll: Zoom</div>
+            <div>• Two-finger pinch: Zoom</div>
+            <div>• Click: Select node</div>
+            <div>• Drag empty space: Marquee select</div>
+            <div>• Cmd+A: Select all</div>
+            <div>• Delete: Remove selected</div>
+            <div>• Escape: Clear selection</div>
+          </div>
+        </Panel>
       </ReactFlow>
+
+      {/* Marquee selection overlay */}
+      {selectionBox && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            pointerEvents: 'none',
+            zIndex: 5,
+          }}
+        >
+          <svg
+            style={{
+              width: '100%',
+              height: '100%',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+            }}
+          >
+            <rect
+              x={Math.min(selectionBox.start.x, selectionBox.end.x)}
+              y={Math.min(selectionBox.start.y, selectionBox.end.y)}
+              width={Math.abs(selectionBox.end.x - selectionBox.start.x)}
+              height={Math.abs(selectionBox.end.y - selectionBox.start.y)}
+              fill="rgba(0, 123, 255, 0.1)"
+              stroke="rgba(0, 123, 255, 0.8)"
+              strokeWidth="1"
+              strokeDasharray="4,4"
+            />
+          </svg>
+        </div>
+      )}
 
       {/* Render remote cursors in a separate SVG overlay */}
       <svg
@@ -446,6 +1276,7 @@ export function CollaborativeFlowCanvas({
               isRemote={true}
               name={cursor.name}
               age={cursor.age}
+              isGhost={cursor.isGhost}
               centerOfBounds={{ x: 0, y: 0 }}
               bounds={{
                 x: 0,
@@ -458,5 +1289,16 @@ export function CollaborativeFlowCanvas({
         )}
       </svg>
     </div>
+  );
+}
+
+export function CollaborativeFlowCanvas({
+  cursorFeedID,
+  containerID,
+}: CollaborativeFlowCanvasProps) {
+  return (
+    <ReactFlowProvider>
+      <FlowCanvasInner cursorFeedID={cursorFeedID} containerID={containerID} />
+    </ReactFlowProvider>
   );
 }

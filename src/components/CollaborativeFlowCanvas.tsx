@@ -15,7 +15,7 @@ import {
   type Viewport,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { CursorFeed } from '../schema';
+import { CursorFeed, CursorContainer } from '../schema';
 import { getColor } from '../utils/getColor';
 import { getName } from '../utils/getName';
 import { Cursor } from './Cursor';
@@ -51,13 +51,20 @@ const initialEdges: Edge[] = [
 
 interface CollaborativeFlowCanvasProps {
   cursorFeedID: string;
+  containerID: string;
 }
 
 export function CollaborativeFlowCanvas({
   cursorFeedID,
+  containerID,
 }: CollaborativeFlowCanvasProps) {
   const { me } = useAccount();
   const cursors = useCoState(CursorFeed, cursorFeedID, { resolve: true });
+  const cursorContainer = useCoState(CursorContainer, containerID, {
+    resolve: true,
+  });
+  const flowDiagram = cursorContainer?.flowDiagram;
+  const flowViewport = cursorContainer?.flowViewport;
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
@@ -70,6 +77,8 @@ export function CollaborativeFlowCanvas({
   const edgesRef = useRef(edges);
   const lastSyncRef = useRef<number>(0);
   const isReceivingUpdateRef = useRef(false);
+  const isInitialLoadRef = useRef(true);
+  const hasLoadedPersistedDataRef = useRef(false);
 
   // Update refs when state changes
   useEffect(() => {
@@ -80,14 +89,71 @@ export function CollaborativeFlowCanvas({
     edgesRef.current = edges;
   }, [edges]);
 
+  // Load persisted flow data on mount
+  useEffect(() => {
+    if (
+      flowDiagram?.nodes &&
+      flowDiagram?.edges &&
+      !hasLoadedPersistedDataRef.current
+    ) {
+      hasLoadedPersistedDataRef.current = true;
+
+      // Convert Jazz nodes to ReactFlow nodes
+      const persistedNodes: Node[] = flowDiagram.nodes.map((jazzNode: any) => ({
+        id: String(jazzNode.id || ''),
+        type: String(jazzNode.type || 'default'),
+        data: { label: String(jazzNode.data?.label || '') },
+        position: {
+          x: Number(jazzNode.position?.x || 0),
+          y: Number(jazzNode.position?.y || 0),
+        },
+      }));
+
+      // Convert Jazz edges to ReactFlow edges
+      const persistedEdges: Edge[] = flowDiagram.edges.map((jazzEdge: any) => ({
+        id: String(jazzEdge.id || ''),
+        source: String(jazzEdge.source || ''),
+        target: String(jazzEdge.target || ''),
+        type: String(jazzEdge.type || 'default'),
+      }));
+
+      // Only set if we have persisted data, otherwise keep initial nodes
+      if (persistedNodes.length > 0) {
+        setNodes(persistedNodes);
+      }
+      if (persistedEdges.length > 0) {
+        setEdges(persistedEdges);
+      }
+    }
+  }, [flowDiagram, setNodes, setEdges]);
+
+  // Load persisted viewport
+  useEffect(() => {
+    if (
+      flowViewport &&
+      reactFlowRef.current &&
+      !hasLoadedPersistedDataRef.current
+    ) {
+      const newViewport = {
+        x: Number(flowViewport.x || 0),
+        y: Number(flowViewport.y || 0),
+        zoom: Number(flowViewport.zoom || 1),
+      };
+      setViewport(newViewport);
+      reactFlowRef.current.setViewport(newViewport);
+    }
+  }, [flowViewport]);
+
   // Sync nodes and edges to cursor feed for real-time collaboration
   const syncFlowData = useCallback(
-    (newNodes: Node[], newEdges: Edge[]) => {
-      if (!cursors || isReceivingUpdateRef.current) return;
+    (newNodes: Node[], newEdges: Edge[], isDragging = false) => {
+      if (!cursors || isReceivingUpdateRef.current || isInitialLoadRef.current)
+        return;
 
-      // Debounce sync to prevent excessive updates
+      // Use different debounce times for dragging vs non-dragging
       const now = Date.now();
-      if (now - lastSyncRef.current < 100) return; // 100ms debounce
+      const debounceTime = isDragging ? 50 : 100; // Faster sync during dragging
+      if (now - lastSyncRef.current < debounceTime) return;
       lastSyncRef.current = now;
 
       // Store flow data in cursor feed as JSON strings
@@ -102,6 +168,38 @@ export function CollaborativeFlowCanvas({
     },
     [cursors],
   );
+
+  // Persist flow data to Jazz database (simplified)
+  const persistFlowData = useCallback(
+    (newNodes: Node[], newEdges: Edge[]) => {
+      if (!flowDiagram || isInitialLoadRef.current) return;
+
+      // For now, just sync to cursor feed for persistence
+      // The Jazz database persistence can be implemented later
+      syncFlowData(newNodes, newEdges, false);
+    },
+    [flowDiagram, syncFlowData],
+  );
+
+  // Persist viewport to Jazz database
+  const persistViewport = useCallback(
+    (newViewport: Viewport) => {
+      if (!flowViewport || isInitialLoadRef.current) return;
+
+      // For now, just update the viewport state
+      // The Jazz database persistence can be implemented later
+      setViewport(newViewport);
+    },
+    [flowViewport],
+  );
+
+  // Mark initial load as complete after a short delay
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      isInitialLoadRef.current = false;
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Listen for flow data changes from other users
   useEffect(() => {
@@ -166,9 +264,10 @@ export function CollaborativeFlowCanvas({
     (params: Connection) => {
       const newEdges = addEdge(params, edges);
       setEdges(newEdges);
-      syncFlowData(nodes, newEdges);
+      syncFlowData(nodes, newEdges, false);
+      persistFlowData(nodes, newEdges);
     },
-    [setEdges, edges, nodes, syncFlowData],
+    [setEdges, edges, nodes, syncFlowData, persistFlowData],
   );
 
   const onCursorMove = useCallback(
@@ -198,7 +297,9 @@ export function CollaborativeFlowCanvas({
 
   const onNodeDragStop = useCallback(() => {
     setIsDragging(false);
-  }, []);
+    // Persist the final state after dragging
+    persistFlowData(nodes, edges);
+  }, [nodes, edges, persistFlowData]);
 
   const onInit = useCallback((instance: ReactFlowInstance) => {
     reactFlowRef.current = instance;
@@ -223,24 +324,28 @@ export function CollaborativeFlowCanvas({
 
       const newNodes = [...nodes, newNode];
       setNodes(newNodes);
-      syncFlowData(newNodes, edges);
+      syncFlowData(newNodes, edges, false);
+      persistFlowData(newNodes, edges);
     },
-    [setNodes, nodes, edges, syncFlowData],
+    [setNodes, nodes, edges, syncFlowData, persistFlowData],
   );
 
-  const onViewportChange = useCallback((newViewport: Viewport) => {
-    setViewport(newViewport);
-  }, []);
+  const onViewportChange = useCallback(
+    (newViewport: Viewport) => {
+      setViewport(newViewport);
+      persistViewport(newViewport);
+    },
+    [persistViewport],
+  );
 
   // Handle node changes and sync
   const onNodesChangeWithSync = useCallback(
     (changes: any) => {
       onNodesChange(changes);
 
-      // Sync after position changes
+      // Sync during dragging for real-time movement
       const hasPositionChange = changes.some(
-        (change: any) =>
-          change.type === 'position' && change.dragging === false,
+        (change: any) => change.type === 'position',
       );
 
       if (hasPositionChange) {
@@ -256,10 +361,16 @@ export function CollaborativeFlowCanvas({
           return acc;
         }, nodes);
 
-        syncFlowData(updatedNodes, edges);
+        // Sync immediately during drag for real-time movement
+        syncFlowData(updatedNodes, edges, isDragging);
+
+        // Persist when dragging stops
+        if (!isDragging) {
+          persistFlowData(updatedNodes, edges);
+        }
       }
     },
-    [onNodesChange, nodes, edges, syncFlowData],
+    [onNodesChange, nodes, edges, syncFlowData, isDragging, persistFlowData],
   );
 
   // Convert flow coordinates to screen coordinates for cursor display

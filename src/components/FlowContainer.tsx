@@ -37,7 +37,13 @@ function Avatar({
 type Mode = 'canvas' | 'flow' | 'collaborative-flow';
 
 /** A higher order component that wraps the canvas with a toggle between modes. */
-function FlowContainer({ cursorFeedID }: { cursorFeedID: string }) {
+function FlowContainer({
+  cursorFeedID,
+  containerID,
+}: {
+  cursorFeedID: string;
+  containerID: string;
+}) {
   const { me } = useAccount();
   const cursors = useCoState(CursorFeed, cursorFeedID, { resolve: true });
   const [mode, setMode] = useState<Mode>('collaborative-flow');
@@ -113,7 +119,10 @@ function FlowContainer({ cursorFeedID }: { cursorFeedID: string }) {
       {mode === 'canvas' && <Container cursorFeedID={cursorFeedID} />}
       {mode === 'flow' && <FlowCanvas cursorFeedID={cursorFeedID} />}
       {mode === 'collaborative-flow' && (
-        <CollaborativeFlowCanvas cursorFeedID={cursorFeedID} />
+        <CollaborativeFlowCanvas
+          cursorFeedID={cursorFeedID}
+          containerID={containerID}
+        />
       )}
     </>
   );

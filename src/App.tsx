@@ -12,17 +12,19 @@ function App() {
   const { me } = useAccount();
   const [loaded, setLoaded] = useState(false);
   const [cursorFeedID, setCursorFeedID] = useState<string | null>(null);
+  const [containerID, setContainerID] = useState<string | null>(null);
 
   useEffect(() => {
     if (!me?.id) return;
     const loadCursorFeed = async () => {
-      const id = await loadCursorContainer(
+      const result = await loadCursorContainer(
         me,
         cursorFeedIDToLoad,
         groupIDToLoad,
       );
-      if (id) {
-        setCursorFeedID(id);
+      if (result) {
+        setCursorFeedID(result.cursorFeedID);
+        setContainerID(result.containerID);
         setLoaded(true);
       }
     };
@@ -32,8 +34,11 @@ function App() {
   return (
     <>
       <main className="h-screen">
-        {loaded && cursorFeedID ? (
-          <FlowContainer cursorFeedID={cursorFeedID} />
+        {loaded && cursorFeedID && containerID ? (
+          <FlowContainer
+            cursorFeedID={cursorFeedID}
+            containerID={containerID}
+          />
         ) : (
           <div>Loading...</div>
         )}

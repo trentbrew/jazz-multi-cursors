@@ -14,6 +14,7 @@ export class RoomSharing {
   private currentRoomId: string | null = null;
   private currentContainer: any | null = null;
   private urlUpdated = false;
+  private firefoxUrlUpdateCount = 0;
 
   static getInstance(): RoomSharing {
     if (!RoomSharing.instance) {
@@ -57,12 +58,28 @@ export class RoomSharing {
    * Update URL with room ID
    */
   updateRoomURL(roomId: string) {
+    // Firefox-specific URL update prevention
+    if (isFirefox()) {
+      this.firefoxUrlUpdateCount++;
+      if (this.firefoxUrlUpdateCount > 3) {
+        console.log(
+          'Firefox: Preventing excessive URL updates to avoid reload loops',
+        );
+        return;
+      }
+    }
+
     const baseUrl = window.location.origin + window.location.pathname;
     const params = new URLSearchParams();
     params.set('room', roomId);
     const shareURL = `${baseUrl}?${params.toString()}`;
-    window.history.replaceState({}, '', shareURL);
-    console.log('Updated room URL:', shareURL);
+
+    try {
+      window.history.replaceState({}, '', shareURL);
+      console.log('Updated room URL:', shareURL);
+    } catch (error) {
+      console.error('Failed to update URL:', error);
+    }
   }
 
   /**
@@ -103,38 +120,326 @@ export function forceFreshSession() {
 }
 
 /**
+ * Safari-specific session handling
+ */
+function isSafari(): boolean {
+  return /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+}
+
+/**
+ * Firefox-specific session handling
+ */
+function isFirefox(): boolean {
+  return navigator.userAgent.includes('Firefox');
+}
+
+/**
+ * Edge-specific session handling
+ */
+function isEdge(): boolean {
+  return (
+    navigator.userAgent.includes('Edg') || navigator.userAgent.includes('Edge')
+  );
+}
+
+/**
+ * Chrome-specific session handling
+ */
+function isChrome(): boolean {
+  return (
+    navigator.userAgent.includes('Chrome') &&
+    !navigator.userAgent.includes('Edg')
+  );
+}
+
+/**
+ * Track session conflict attempts to prevent infinite loops
+ */
+let sessionConflictAttempts = 0;
+const MAX_SESSION_CONFLICT_ATTEMPTS = 3;
+
+/**
+ * Reset session conflict tracking
+ */
+export function resetSessionConflictTracking() {
+  sessionConflictAttempts = 0;
+}
+
+/**
+ * Check if we're in a session conflict loop
+ */
+function isInSessionConflictLoop(): boolean {
+  return sessionConflictAttempts >= MAX_SESSION_CONFLICT_ATTEMPTS;
+}
+
+/**
+ * Increment session conflict attempts
+ */
+function incrementSessionConflictAttempts() {
+  sessionConflictAttempts++;
+  console.log(
+    `Session conflict attempt ${sessionConflictAttempts}/${MAX_SESSION_CONFLICT_ATTEMPTS}`,
+  );
+}
+
+/**
+ * Firefox-compatible session clearing without page reload
+ */
+function clearFirefoxSessionsWithoutReload() {
+  if (isFirefox()) {
+    console.log(
+      'Detected Firefox - using Firefox-specific session clearing without reload',
+    );
+
+    try {
+      // Firefox has different localStorage behavior
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (
+          key &&
+          (key.includes('jazz') ||
+            key.includes('session') ||
+            key.includes('cursor'))
+        ) {
+          keysToRemove.push(key);
+        }
+      }
+
+      // Remove keys one by one to avoid Firefox issues
+      keysToRemove.forEach((key) => {
+        try {
+          localStorage.removeItem(key);
+        } catch (error) {
+          console.log(`Failed to remove localStorage key ${key}:`, error);
+        }
+      });
+
+      // Clear sessionStorage more carefully
+      try {
+        sessionStorage.clear();
+      } catch (error) {
+        console.log('Failed to clear sessionStorage:', error);
+      }
+
+      // Firefox has stricter cookie policies
+      try {
+        const cookies = document.cookie.split(';');
+        cookies.forEach((cookie) => {
+          const eqPos = cookie.indexOf('=');
+          const name =
+            eqPos > -1 ? cookie.substr(0, eqPos).trim() : cookie.trim();
+          if (name) {
+            document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+            document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=${window.location.hostname}`;
+          }
+        });
+      } catch (error) {
+        console.log('Failed to clear cookies:', error);
+      }
+
+      console.log('Firefox session data cleared without reload');
+    } catch (error) {
+      console.error('Failed to clear Firefox sessions:', error);
+    }
+  }
+}
+
+/**
+ * Edge-compatible session clearing
+ */
+function clearEdgeSessions() {
+  if (isEdge()) {
+    console.log('Detected Edge - using Edge-specific session clearing');
+
+    try {
+      // Edge has different localStorage behavior
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (
+          key &&
+          (key.includes('jazz') ||
+            key.includes('session') ||
+            key.includes('cursor'))
+        ) {
+          keysToRemove.push(key);
+        }
+      }
+
+      // Remove keys one by one to avoid Edge issues
+      keysToRemove.forEach((key) => {
+        try {
+          localStorage.removeItem(key);
+        } catch (error) {
+          console.log(`Failed to remove localStorage key ${key}:`, error);
+        }
+      });
+
+      // Clear sessionStorage more carefully
+      try {
+        sessionStorage.clear();
+      } catch (error) {
+        console.log('Failed to clear sessionStorage:', error);
+      }
+
+      // Edge has different cookie policies
+      try {
+        const cookies = document.cookie.split(';');
+        cookies.forEach((cookie) => {
+          const eqPos = cookie.indexOf('=');
+          const name =
+            eqPos > -1 ? cookie.substr(0, eqPos).trim() : cookie.trim();
+          if (name) {
+            document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+            document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=${window.location.hostname}`;
+          }
+        });
+      } catch (error) {
+        console.log('Failed to clear cookies:', error);
+      }
+
+      console.log('Edge session data cleared');
+    } catch (error) {
+      console.error('Failed to clear Edge sessions:', error);
+    }
+  }
+}
+
+/**
+ * Firefox-compatible session clearing
+ */
+function clearFirefoxSessions() {
+  if (isFirefox()) {
+    console.log('Detected Firefox - using Firefox-specific session clearing');
+
+    try {
+      // Firefox has different localStorage behavior
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (
+          key &&
+          (key.includes('jazz') ||
+            key.includes('session') ||
+            key.includes('cursor'))
+        ) {
+          keysToRemove.push(key);
+        }
+      }
+
+      // Remove keys one by one to avoid Firefox issues
+      keysToRemove.forEach((key) => {
+        try {
+          localStorage.removeItem(key);
+        } catch (error) {
+          console.log(`Failed to remove localStorage key ${key}:`, error);
+        }
+      });
+
+      // Clear sessionStorage more carefully
+      try {
+        sessionStorage.clear();
+      } catch (error) {
+        console.log('Failed to clear sessionStorage:', error);
+      }
+
+      // Firefox has stricter cookie policies
+      try {
+        const cookies = document.cookie.split(';');
+        cookies.forEach((cookie) => {
+          const eqPos = cookie.indexOf('=');
+          const name =
+            eqPos > -1 ? cookie.substr(0, eqPos).trim() : cookie.trim();
+          if (name) {
+            document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+            document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=${window.location.hostname}`;
+          }
+        });
+      } catch (error) {
+        console.log('Failed to clear cookies:', error);
+      }
+
+      console.log('Firefox session data cleared');
+    } catch (error) {
+      console.error('Failed to clear Firefox sessions:', error);
+    }
+  }
+}
+
+/**
+ * Safari-compatible session clearing
+ */
+function clearSafariSessions() {
+  if (isSafari()) {
+    console.log('Detected Safari - using Safari-specific session clearing');
+
+    // Safari has stricter localStorage policies
+    try {
+      // Clear all localStorage
+      localStorage.clear();
+
+      // Clear sessionStorage
+      sessionStorage.clear();
+
+      // Clear cookies more aggressively for Safari
+      const cookies = document.cookie.split(';');
+      cookies.forEach((cookie) => {
+        const eqPos = cookie.indexOf('=');
+        const name = eqPos > -1 ? cookie.substr(0, eqPos) : cookie;
+        document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+        document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=${window.location.hostname}`;
+      });
+
+      console.log('Safari session data cleared');
+    } catch (error) {
+      console.error('Failed to clear Safari sessions:', error);
+    }
+  }
+}
+
+/**
  * Clear session conflicts by clearing local storage and reloading
  */
 export function clearSessionConflicts() {
   console.log('Clearing session conflicts...');
 
-  // Clear any stored session data
-  const keysToRemove = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (
-      key &&
-      (key.includes('jazz') ||
-        key.includes('session') ||
-        key.includes('cursor'))
-    ) {
-      keysToRemove.push(key);
+  // Use browser-specific clearing
+  if (isSafari()) {
+    clearSafariSessions();
+  } else if (isFirefox()) {
+    clearFirefoxSessions();
+  } else if (isEdge()) {
+    clearEdgeSessions();
+  } else {
+    // Standard clearing for other browsers
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (
+        key &&
+        (key.includes('jazz') ||
+          key.includes('session') ||
+          key.includes('cursor'))
+      ) {
+        keysToRemove.push(key);
+      }
     }
+
+    keysToRemove.forEach((key) => {
+      localStorage.removeItem(key);
+    });
+
+    // Also clear sessionStorage
+    sessionStorage.clear();
+
+    // Clear any cookies that might be related
+    document.cookie.split(';').forEach(function (c) {
+      document.cookie = c
+        .replace(/^ +/, '')
+        .replace(/=.*/, '=;expires=' + new Date().toUTCString() + ';path=/');
+    });
   }
-
-  keysToRemove.forEach((key) => {
-    localStorage.removeItem(key);
-  });
-
-  // Also clear sessionStorage
-  sessionStorage.clear();
-
-  // Clear any cookies that might be related
-  document.cookie.split(';').forEach(function (c) {
-    document.cookie = c
-      .replace(/^ +/, '')
-      .replace(/=.*/, '=;expires=' + new Date().toUTCString() + ';path=/');
-  });
 
   console.log('Cleared session data, reloading page...');
   window.location.reload();
@@ -156,13 +461,18 @@ function createGroup(me: Account) {
 }
 
 export async function loadGroup(me: Account, groupID: ID<Group>) {
+  console.log('loadGroup called with:', { groupID, meId: me?.id });
+
   if (groupID === undefined) {
     console.log('No group ID found in .env, creating group...');
     return createGroup(me);
   }
 
   try {
+    console.log('Attempting to load group with ID:', groupID);
     const group = await Group.load(groupID, {});
+    console.log('Group.load result:', group);
+
     if (group === null || group === undefined) {
       console.log('Group not found, creating group...');
       return createGroup(me);
@@ -368,6 +678,9 @@ async function createCursorContainerWithRetry(
       'with session ID:',
       sessionId,
     );
+
+    // Reset session conflict tracking on success
+    resetSessionConflictTracking();
     return cursorContainer;
   } catch (error) {
     console.error(
@@ -376,29 +689,125 @@ async function createCursorContainerWithRetry(
     );
 
     if (error instanceof Error && error.message.includes('verified sessions')) {
-      if (retryCount < maxRetries) {
-        console.log(
-          `Retrying with new unique ID (attempt ${retryCount + 1}/${maxRetries})...`,
+      incrementSessionConflictAttempts();
+
+      // Check if we're in a session conflict loop
+      if (isInSessionConflictLoop()) {
+        console.error(
+          'Session conflict loop detected, using alternative approach...',
         );
-        // Clear some session data before retry
-        const keysToRemove = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && key.includes('jazz')) {
-            keysToRemove.push(key);
+
+        if (isFirefox()) {
+          // For Firefox, try clearing sessions without reload and use a completely different ID
+          clearFirefoxSessionsWithoutReload();
+          const alternativeId = `firefox-fresh-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+          try {
+            const alternativeContainer = CursorContainer.create(
+              {
+                cursorFeed: CursorFeed.create([], group),
+                flowDiagram: FlowDiagram.create(
+                  {
+                    nodes: [],
+                    edges: [],
+                  },
+                  group,
+                ),
+                flowViewport: FlowViewport.create(
+                  {
+                    x: 0,
+                    y: 0,
+                    zoom: 1,
+                  },
+                  group,
+                ),
+              },
+              {
+                owner: group,
+                unique: alternativeId,
+              },
+            );
+
+            console.log(
+              'Created alternative container for Firefox:',
+              alternativeContainer.id,
+            );
+            resetSessionConflictTracking();
+            return alternativeContainer;
+          } catch (alternativeError) {
+            console.error(
+              'Alternative approach also failed:',
+              alternativeError,
+            );
+            // As a last resort, force a fresh session but only if user confirms
+            if (
+              confirm(
+                'Firefox session conflict persists. Would you like to start with a completely fresh session?',
+              )
+            ) {
+              forceFreshSession();
+            }
+            return null;
+          }
+        } else {
+          // For other browsers, use the existing approach
+          if (retryCount < maxRetries) {
+            console.log(
+              `Retrying with new unique ID (attempt ${retryCount + 1}/${maxRetries})...`,
+            );
+            // Clear some session data before retry
+            const keysToRemove = [];
+            for (let i = 0; i < localStorage.length; i++) {
+              const key = localStorage.key(i);
+              if (key && key.includes('jazz')) {
+                keysToRemove.push(key);
+              }
+            }
+            keysToRemove.forEach((key) => localStorage.removeItem(key));
+
+            return createCursorContainerWithRetry(
+              group,
+              effectiveCursorFeedId,
+              retryCount + 1,
+            );
+          } else {
+            console.error('Max retries reached, clearing all session data...');
+            clearSessionConflicts();
+            return null;
           }
         }
-        keysToRemove.forEach((key) => localStorage.removeItem(key));
-
-        return createCursorContainerWithRetry(
-          group,
-          effectiveCursorFeedId,
-          retryCount + 1,
-        );
       } else {
-        console.error('Max retries reached, clearing all session data...');
-        clearSessionConflicts();
-        return null;
+        // Not in a loop yet, try normal retry approach
+        if (retryCount < maxRetries) {
+          console.log(
+            `Retrying with new unique ID (attempt ${retryCount + 1}/${maxRetries})...`,
+          );
+
+          // Use exponential backoff for retries
+          const backoffDelay = Math.min(1000 * Math.pow(2, retryCount), 5000);
+          console.log(`Waiting ${backoffDelay}ms before retry...`);
+          await new Promise((resolve) => setTimeout(resolve, backoffDelay));
+
+          // Clear some session data before retry
+          const keysToRemove = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.includes('jazz')) {
+              keysToRemove.push(key);
+            }
+          }
+          keysToRemove.forEach((key) => localStorage.removeItem(key));
+
+          return createCursorContainerWithRetry(
+            group,
+            effectiveCursorFeedId,
+            retryCount + 1,
+          );
+        } else {
+          console.error('Max retries reached, clearing all session data...');
+          clearSessionConflicts();
+          return null;
+        }
       }
     }
 
@@ -634,30 +1043,103 @@ export async function loadSharedCursorContainer(
     const roomId = roomSharing.getRoomId();
 
     console.log('Loading shared container for room:', roomId);
+    console.log('Browser detection:', {
+      isSafari: isSafari(),
+      isFirefox: isFirefox(),
+      isEdge: isEdge(),
+      isChrome: isChrome(),
+      userAgent: navigator.userAgent,
+    });
+
+    if (isSafari()) {
+      console.log('Safari detected - using enhanced error handling');
+    } else if (isFirefox()) {
+      console.log('Firefox detected - using Firefox-specific handling');
+    } else if (isEdge()) {
+      console.log('Edge detected - using Edge-specific handling');
+    } else if (isChrome()) {
+      console.log('Chrome detected - using standard handling');
+    } else {
+      console.log('Other browser detected - using standard handling');
+    }
 
     // Load the group first
+    console.log('Attempting to load group with ID:', groupID);
     const group = await loadGroup(me, groupID);
     console.log('Group loaded:', group?.id);
 
+    if (!group) {
+      console.error('Failed to load group - this might be the issue for Edge');
+
+      if (isEdge()) {
+        console.log('Edge-specific group loading fallback...');
+        // Try creating a new group for Edge
+        try {
+          const newGroup = createGroup(me);
+          console.log('Created new group for Edge:', newGroup.id);
+          return {
+            cursorFeedID: 'edge-fallback-feed',
+            containerID: 'edge-fallback-container',
+            groupId: newGroup.id,
+            roomId: roomId,
+          };
+        } catch (fallbackError) {
+          console.error('Edge fallback also failed:', fallbackError);
+          return undefined;
+        }
+      }
+
+      return undefined;
+    }
+
     // Try to load existing cursor container for this room
     let cursorContainer = null;
-    try {
-      cursorContainer = await CursorContainer.loadUnique(
-        `room-${roomId}`,
-        group.id,
-        {
-          resolve: {
-            cursorFeed: true,
-            flowDiagram: true,
-            flowViewport: true,
+    let retryCount = 0;
+    const maxRetries = isSafari() ? 3 : isFirefox() ? 2 : 1;
+
+    while (retryCount < maxRetries) {
+      try {
+        cursorContainer = await CursorContainer.loadUnique(
+          `room-${roomId}`,
+          group.id,
+          {
+            resolve: {
+              cursorFeed: true,
+              flowDiagram: true,
+              flowViewport: true,
+            },
           },
-        },
-      );
-      console.log(
-        `Loaded existing cursor container for room: ${cursorContainer?.id}`,
-      );
-    } catch (error) {
-      console.log('No existing container found for room, creating new one...');
+        );
+        console.log(
+          `Loaded existing cursor container for room: ${cursorContainer?.id}`,
+        );
+        break;
+      } catch (error) {
+        console.log(`Attempt ${retryCount + 1} failed:`, error);
+        retryCount++;
+
+        if (retryCount >= maxRetries) {
+          console.log(
+            'No existing container found for room, creating new one...',
+          );
+          break;
+        }
+
+        // Browser-specific retry handling
+        if (isSafari()) {
+          console.log('Safari: Clearing sessions and retrying...');
+          clearSafariSessions();
+          await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second
+        } else if (isFirefox()) {
+          console.log('Firefox: Clearing sessions and retrying...');
+          clearFirefoxSessions();
+          await new Promise((resolve) => setTimeout(resolve, 500)); // Wait 500ms for Firefox
+        } else if (isEdge()) {
+          console.log('Edge: Clearing sessions and retrying...');
+          clearEdgeSessions();
+          await new Promise((resolve) => setTimeout(resolve, 500)); // Wait 500ms for Edge
+        }
+      }
     }
 
     if (cursorContainer === null || cursorContainer === undefined) {
@@ -696,16 +1178,102 @@ export async function loadSharedCursorContainer(
       } catch (error) {
         console.error('Failed to create shared container:', error);
 
-        // If there's a session conflict, clear session data and retry
+        // If there's a session conflict, handle it based on browser type
         if (
           error instanceof Error &&
           error.message.includes('verified sessions')
         ) {
-          console.log(
-            'Session conflict detected, clearing session data and retrying...',
-          );
-          clearSessionConflicts();
-          return undefined;
+          incrementSessionConflictAttempts();
+
+          if (isInSessionConflictLoop()) {
+            console.error(
+              'Session conflict loop detected in shared container creation...',
+            );
+
+            if (isFirefox()) {
+              // For Firefox, try clearing sessions without reload and use a different approach
+              clearFirefoxSessionsWithoutReload();
+
+              // Try creating with a completely different room ID
+              const alternativeRoomId = `firefox-fresh-room-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+              try {
+                const alternativeContainer = CursorContainer.create(
+                  {
+                    cursorFeed: CursorFeed.create([], group),
+                    flowDiagram: FlowDiagram.create(
+                      {
+                        nodes: [],
+                        edges: [],
+                      },
+                      group,
+                    ),
+                    flowViewport: FlowViewport.create(
+                      {
+                        x: 0,
+                        y: 0,
+                        zoom: 1,
+                      },
+                      group,
+                    ),
+                  },
+                  {
+                    owner: group,
+                    unique: `room-${alternativeRoomId}`,
+                  },
+                );
+
+                console.log(
+                  'Created alternative shared container for Firefox:',
+                  alternativeContainer.id,
+                );
+                resetSessionConflictTracking();
+
+                // Update the room sharing instance with the new room ID
+                const roomSharing = RoomSharing.getInstance();
+                roomSharing.updateRoomURL(alternativeRoomId);
+
+                return {
+                  cursorFeedID: alternativeContainer.cursorFeed.id,
+                  containerID: alternativeContainer.id,
+                  groupId: group.id,
+                  roomId: alternativeRoomId,
+                };
+              } catch (alternativeError) {
+                console.error(
+                  'Alternative shared container creation also failed:',
+                  alternativeError,
+                );
+                // As a last resort, ask user if they want to force a fresh session
+                if (
+                  confirm(
+                    'Firefox session conflict persists. Would you like to start with a completely fresh session?',
+                  )
+                ) {
+                  forceFreshSession();
+                }
+                return undefined;
+              }
+            } else {
+              // For other browsers, use the existing approach
+              clearSessionConflicts();
+              return undefined;
+            }
+          } else {
+            // Not in a loop yet, try normal retry approach
+            console.log(
+              'Session conflict detected, clearing session data and retrying...',
+            );
+
+            if (isFirefox()) {
+              clearFirefoxSessionsWithoutReload();
+            } else if (isEdge()) {
+              clearEdgeSessions();
+            } else {
+              clearSessionConflicts();
+            }
+            return undefined;
+          }
         }
 
         return undefined;
@@ -722,6 +1290,10 @@ export async function loadSharedCursorContainer(
     console.log('Container ID:', cursorContainer.id);
     console.log('Cursor Feed ID:', cursorContainer.cursorFeed.id);
     console.log('Shareable Link:', roomSharing.getShareableLink());
+    console.log(
+      'Browser:',
+      isSafari() ? 'Safari' : isFirefox() ? 'Firefox' : 'Other',
+    );
     console.log('================================');
 
     return {

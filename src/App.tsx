@@ -8,12 +8,26 @@ import {
   clearSessionConflicts,
   forceFreshSession,
   RoomSharing,
+  resetSessionConflictTracking,
 } from './utils/loadCursorContainer';
 
 const groupIDToLoad = import.meta.env.VITE_GROUP_ID;
 
 function App() {
   const { me } = useAccount();
+
+  // Add debugging for Edge
+  useEffect(() => {
+    console.log('App mounted, me state:', {
+      meId: me?.id,
+      meProfile: me?.profile,
+      meSessionID: me?.sessionID,
+      isEdge:
+        navigator.userAgent.includes('Edg') ||
+        navigator.userAgent.includes('Edge'),
+    });
+  }, [me]);
+
   const [loaded, setLoaded] = useState(false);
   const [cursorFeedID, setCursorFeedID] = useState<string | null>(null);
   const [containerID, setContainerID] = useState<string | null>(null);
@@ -24,11 +38,27 @@ function App() {
   const loadingRef = useRef(false);
 
   const loadCursorFeed = useCallback(async () => {
-    if (!me?.id || loadingRef.current) return;
+    console.log('loadCursorFeed called, me state:', {
+      me: me,
+      meId: me?.id,
+      meProfile: me?.profile,
+      hasMe: !!me,
+      loadingRef: loadingRef.current,
+    });
+
+    if (!me?.id || loadingRef.current) {
+      console.log('loadCursorFeed early return - no me.id or already loading');
+      return;
+    }
 
     loadingRef.current = true;
     try {
       setError(null);
+      console.log('About to call loadSharedCursorContainer with:', {
+        meId: me?.id,
+        groupIDToLoad,
+        hasGroupID: !!groupIDToLoad,
+      });
       const result = await loadSharedCursorContainer(me, groupIDToLoad);
       if (result) {
         setCursorFeedID(result.cursorFeedID);
@@ -36,6 +66,8 @@ function App() {
         setGroupId(result.groupId);
         setRoomId(result.roomId);
         setLoaded(true);
+        // Reset session conflict tracking on successful load
+        resetSessionConflictTracking();
       } else {
         setError('Failed to load shared cursor container');
       }
@@ -49,7 +81,23 @@ function App() {
 
   useEffect(() => {
     loadCursorFeed();
-  }, [loadCursorFeed]);
+
+    // Add timeout for Edge in case it takes too long to initialize
+    const isEdge =
+      navigator.userAgent.includes('Edg') ||
+      navigator.userAgent.includes('Edge');
+    if (isEdge) {
+      const timeout = setTimeout(() => {
+        console.log('Edge timeout reached, checking me state again...');
+        if (!me?.id) {
+          console.error('Edge: me.id still not available after timeout');
+          setError('Edge: Account initialization timeout');
+        }
+      }, 10000); // 10 second timeout
+
+      return () => clearTimeout(timeout);
+    }
+  }, [loadCursorFeed, me?.id]);
 
   const handleReset = () => {
     if (

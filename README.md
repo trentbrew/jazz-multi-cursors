@@ -1,87 +1,96 @@
-# Jazz Multi-Cursors Example
+# Multi-Cursors with Flow Diagrams
 
-Track user presence on a canvas with multiple cursors and out of bounds indicators.
-Live version: [https://multi-cursors.demo.jazz.tools/](https://multi-cursors.demo.jazz.tools/)
+This example demonstrates collaborative cursor tracking with multiple modes:
 
-## Getting started
+1. **Canvas Mode**: Original SVG-based canvas with collaborative cursors
+2. **Flow Mode**: ReactFlow-based diagram editor with cursor tracking
+3. **Collaborative Flow Mode**: Enhanced flow editor with real-time collaboration
 
-You can either
+## Features
 
-1. Clone the jazz repository, and run the app within the monorepo.
-2. Or create a new Jazz project using this example as a template.
+### Canvas Mode
 
-### Using the example as a template
+- SVG-based infinite canvas
+- Real-time cursor tracking across multiple users
+- Pan and zoom functionality
+- Visual cursor indicators with user names
 
-Create a new Jazz project, and use this example as a template.
+### Flow Mode
 
-```bash
-npx create-jazz-app@latest multi-cursors-app --example multi-cursors
-```
+- ReactFlow-based diagram editor
+- Interactive nodes and edges
+- Real-time cursor tracking
+- Double-click to add new nodes
+- Drag and drop functionality
 
-Go to the new project directory.
+### Collaborative Flow Mode
 
-```bash
-cd multi-cursors-app
-```
+- Enhanced flow editor with collaboration features
+- Real-time cursor tracking
+- Interactive diagram editing
+- User presence indicators
 
-Run the dev server.
+## Getting Started
 
-```bash
-npm run dev
-```
+1. Install dependencies:
 
-If you want to persist the cursors between server restarts, you'll need to update your .env file. Check your console logs for the correct values to add to your .env file.
+   ```bash
+   pnpm install
+   ```
 
-```
-VITE_CURSOR_FEED_ID=
-VITE_GROUP_ID=
-VITE_OLD_CURSOR_AGE_SECONDS=5
-```
+2. Start the development server:
 
-### Using the monorepo
+   ```bash
+   pnpm dev
+   ```
 
-This requires `pnpm` to be installed, see [https://pnpm.io/installation](https://pnpm.io/installation).
+3. Open multiple browser windows to test collaboration
 
-Clone the jazz repository.
+## Usage
 
-```bash
-git clone https://github.com/garden-co/jazz.git
-```
+- **Switch Modes**: Use the toggle button in the top-left corner to switch between Canvas, Flow, and Collaborative Flow modes
+- **Add Nodes**: Double-click anywhere in Flow mode to add new nodes
+- **Connect Nodes**: Drag from one node's handle to another to create connections
+- **Move Nodes**: Drag nodes to reposition them
+- **Pan Canvas**: Click and drag in empty areas to pan
+- **Zoom**: Use mouse wheel or the controls in the bottom-right
 
-Install and build dependencies.
+## Technical Details
 
-```bash
-pnpm i && npx turbo build
-```
+### Dependencies
 
-Go to the example directory.
+- `@xyflow/react`: ReactFlow library for diagram editing
+- `jazz-tools`: Real-time collaboration framework
+- `react-spring`: Smooth animations for cursors
 
-```bash
-cd jazz/examples/multi-cursors/
-```
+### Architecture
 
-Start the dev server.
+- **Cursor Tracking**: Uses Jazz's `CursorFeed` for real-time cursor synchronization
+- **Flow Diagrams**: ReactFlow handles the diagram state and interactions
+- **Mode Switching**: Simple state management for switching between different canvas types
 
-```bash
-pnpm dev
-```
+### Key Components
 
-Open [http://localhost:5173](http://localhost:5173) with your browser to see the result.
+- `FlowContainer`: Main container that manages mode switching
+- `FlowCanvas`: Basic ReactFlow implementation with cursor tracking
+- `CollaborativeFlowCanvas`: Enhanced flow editor with collaboration features
+- `Cursor`: Visual cursor component with user information
 
-If you want to persist the cursors between server restarts, you'll need to update your .env file. Check your console logs for the correct values to add to your .env file.
+## Future Enhancements
 
-```
-VITE_CURSOR_FEED_ID=
-VITE_GROUP_ID=
-VITE_OLD_CURSOR_AGE_SECONDS=5
-```
+- [ ] Collaborative node editing (labels, properties)
+- [ ] Real-time edge creation and modification
+- [ ] Custom node types and styling
+- [ ] Export/import functionality
+- [ ] Undo/redo with collaboration
+- [ ] Comments and annotations
+- [ ] Version history and branching
 
-## Questions / problems / feedback
+## Contributing
 
-If you have feedback, let us know on [Discord](https://discord.gg/utDMjHYg42) or open an issue or PR to fix something that seems wrong.
+This is part of the Jazz examples. Feel free to contribute by:
 
-## Configuration: sync server
-
-By default, the example app uses [Jazz Cloud](https://jazz.tools/cloud) (`wss://cloud.jazz.tools`) - so cross-device use, invites and collaboration should just work.
-
-You can also run a local sync server by running `npx jazz-run sync`, and setting the `sync` parameter of `JazzReactProvider` in [./src/main.tsx](./src/main.tsx) to `{ peer: "ws://localhost:4200" }`.
+1. Adding new flow diagram features
+2. Improving cursor visualization
+3. Enhancing collaboration features
+4. Adding new node types and interactions

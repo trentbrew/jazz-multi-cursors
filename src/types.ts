@@ -1,4 +1,4 @@
-import { z } from "jazz-tools";
+import { z } from 'jazz-tools';
 
 export const Vec2 = z.object({
   x: z.number(),
@@ -6,8 +6,16 @@ export const Vec2 = z.object({
 });
 export type Vec2 = z.infer<typeof Vec2>;
 
+export const FlowData = z.object({
+  nodes: z.string(), // Store as JSON string
+  edges: z.string(), // Store as JSON string
+  timestamp: z.number(),
+});
+export type FlowData = z.infer<typeof FlowData>;
+
 export const Cursor = z.object({
   position: Vec2,
+  flowData: FlowData.optional(),
 });
 export type Cursor = z.infer<typeof Cursor>;
 

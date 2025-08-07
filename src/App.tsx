@@ -1,9 +1,9 @@
-import { useAccount } from "jazz-tools/react";
-import { useEffect, useState } from "react";
-import { Logo } from "./Logo";
-import Container from "./components/Container";
-import { getName } from "./utils/getName";
-import { loadCursorContainer } from "./utils/loadCursorContainer";
+import { useAccount } from 'jazz-tools/react';
+import { useEffect, useState } from 'react';
+import { Logo } from './Logo';
+import FlowContainer from './components/FlowContainer';
+import { getName } from './utils/getName';
+import { loadCursorContainer } from './utils/loadCursorContainer';
 
 const cursorFeedIDToLoad = import.meta.env.VITE_CURSOR_FEED_ID;
 const groupIDToLoad = import.meta.env.VITE_GROUP_ID;
@@ -33,7 +33,7 @@ function App() {
     <>
       <main className="h-screen">
         {loaded && cursorFeedID ? (
-          <Container cursorFeedID={cursorFeedID} />
+          <FlowContainer cursorFeedID={cursorFeedID} />
         ) : (
           <div>Loading...</div>
         )}
